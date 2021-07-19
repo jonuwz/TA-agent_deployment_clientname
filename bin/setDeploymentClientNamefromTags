@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+import json
+import sys
+import select
+import requests
+
+try:
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+except:
+    pass
+
+def getToken():
+    # wait at most 1s for authtoken to be passed on stdin
+    authToken=""
+    i, o, e = select.select( [sys.stdin], [], [], 1)
+    if (i):
+        authToken = sys.stdin.readline().strip()
+    else:
+        print("No stdin")
+        sys.exit(1)
+    if len(authToken) < 10:
+        print("bad token")
+        sys.exit(1)
+    else:
+        return authToken
+
+def clientNameByTags():
+    try:
+        res = requests.get('http://169.254.169.254/metadata/instance/compute?api-version=2021-02-01',headers={'Metadata': "true"}, timeout=30)
+        content=json.loads(res.content)
+    except e:
+        print(e)
+        sys.exit(1)
+
+    tags = {}
+    for obj in content['tagsList']:
+        tags[obj['name']] = obj['value']
+
+    subscriptionId = content.get('subscriptionId','unknown')
+    resourceGroupName = content.get('resourceGroupName','unknown')
+    name = content.get('name','unknown')
+    project = tags.get('project','unknown')
+    family = tags.get('family','unknown')
+    app = tags.get('app','unknown')
+    service = tags.get('service','unknown')
+
+    return "cloud.azure.%s.%s.%s.%s.%s" % (project,family,app,service,name)
+
+def clientName(authToken):
+    clientName = ""
+    try:
+        res = requests.get('https://localhost:8089/servicesNS/-/-/deployment/client/config?output_mode=json',headers={'Authorization':  "Splunk %s" % (authToken)}, verify=False, timeout=5)
+        body=json.loads(res.content)
+        entries=body.get('entry',[])
+        if len(entries) == 1:
+            clientName=entries[0].get('content',{}).get('clientName',"")
+    except:
+        pass
+    return clientName
+
+def setClientName(authToken,name):
+    data = "clientName=%s" % (name)
+    clientName = ""
+    try:
+        res = requests.post('https://localhost:8089/servicesNS/-/-/deployment/client/config?output_mode=json',data=data,headers={'Authorization':  "Splunk %s" % (authToken)}, verify=False, timeout=5)
+        body=json.loads(res.content)
+        entries=body.get('entry',[])
+        if len(entries) == 1:
+            clientName=entries[0].get('content',{}).get('clientName',"")
+    except:
+        pass
+    return clientName
+
+authTok = getToken()
+desiredName = clientNameByTags()
+actualName  = clientName(authTok)
+
+if desiredName != actualName:
+    setClientName(authTok,desiredName)
+# vi:et:sts=4:sw=4
+
