@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 import json
 import sys
+import os
+import socket
 import select
 import requests
+import re
+
+DEFAULT_DC_PROVIDER = 'myco'
 
 try:
     import urllib3
@@ -17,35 +22,76 @@ def getToken():
     if (i):
         authToken = sys.stdin.readline().strip()
     else:
-        print("No stdin")
-        sys.exit(1)
+        print("ERR No stdin")
+        return None
     if len(authToken) < 10:
-        print("bad token")
-        sys.exit(1)
+        print("ERR bad token")
+        return None
     else:
         return authToken
 
-def clientNameByTags():
+def azureTags():
     try:
-        res = requests.get('http://169.254.169.254/metadata/instance/compute?api-version=2021-02-01',headers={'Metadata': "true"}, timeout=30)
+        res = requests.get('http://169.254.169.254/metadata/instance/compute?api-version=2021-02-01',headers={'Metadata': "true"}, timeout=5)
         content=json.loads(res.content)
-    except e:
+    except:
+        e = sys.exc_info()[0]
         print(e)
-        sys.exit(1)
+        return None
 
     tags = {}
     for obj in content['tagsList']:
         tags[obj['name']] = obj['value']
 
-    subscriptionId = content.get('subscriptionId','unknown')
-    resourceGroupName = content.get('resourceGroupName','unknown')
-    name = content.get('name','unknown')
-    project = tags.get('project','unknown')
-    family = tags.get('family','unknown')
-    app = tags.get('app','unknown')
-    service = tags.get('service','unknown')
+    tags['name'] = content.get('name','unknown')
+    tags['location'] = 'cloud'
+    tags['provider'] = 'azure'
+    return tags
 
-    return "cloud.azure.%s.%s.%s.%s.%s" % (project,family,app,service,name)
+def gcpTags():
+    try:
+        res = requests.get('http://metadata.google.internal/computeMetadata/v1/?recursive=true',headers={'Metadata-Flavor': 'Google'}, timeout=5    )
+        content=json.loads(res.content)
+    except:
+        e = sys.exc_info()[0]
+        print(e)
+        return None
+
+    tags = content.get('project').get('attributes',{})
+    itags = content.get('instance').get('attributes',{})
+    itags.pop('project',None)
+
+    tags.update(itags)
+
+    tags['name'] = content.get('instance',{}).get('name','unknown')
+    tags['location'] = 'cloud'
+    tags['provider'] = 'gcp'
+
+    return tags
+
+def localTags():
+
+    tags = {}
+    path = '/etc/identity'
+    if not os.path.isfile(path) or not os.access(path, os.R_OK):
+        return None
+
+    with open(path) as myfile:
+      for line in myfile:
+
+        key, val = line.strip().partition("=")[::2]
+        tags[key.strip()] = str(val)
+
+    if 'project' not in tags:
+        return None
+
+    tags['name'] = socket.gethostname().split('.', 1)[0]
+    if 'location' not in tags:
+        tags['location'] = 'dc'
+    if 'provider' not in tags:
+        tags['provider'] = DEFAULT_DC_PROVIDER
+    
+    return tags
 
 def clientName(authToken):
     clientName = ""
@@ -56,7 +102,8 @@ def clientName(authToken):
         if len(entries) == 1:
             clientName=entries[0].get('content',{}).get('clientName',"")
     except:
-        pass
+        print("Failed to get clientName")
+        return None
     return clientName
 
 def setClientName(authToken,name):
@@ -69,14 +116,39 @@ def setClientName(authToken,name):
         if len(entries) == 1:
             clientName=entries[0].get('content',{}).get('clientName',"")
     except:
-        pass
+        print("Failed to set clientName")
+        return None
     return clientName
 
-authTok = getToken()
-desiredName = clientNameByTags()
-actualName  = clientName(authTok)
+def clientNameFromTags(t):
 
-if desiredName != actualName:
-    setClientName(authTok,desiredName)
+    pattern = re.compile('[\W_]+')
+
+    cleanTags=[]
+    for key in ["location","provider","project","family","app","service","name"]:
+        val = t.get(key,'unknown')
+        val = pattern.sub('',val)
+        cleanTags.append(val.lower())
+
+    return "%s.%s.%s.%s.%s.%s.%s" % tuple(cleanTags)
+
+if __name__ == "__main__":
+    authToken = getToken()
+    if authToken is None:
+        print("ERR No token")
+        sys.exit(1)
+
+    tags = localTags()
+    if tags is None:
+        tags = azureTags()
+    if tags is None:
+        tags = gcpTags()
+
+    if tags is not None:
+        desiredName = clientNameFromTags(tags)
+        actualName  = clientName(authToken)
+
+        if actualName is not None and desiredName != actualName:
+            setClientName(authToken,desiredName)
+
 # vi:et:sts=4:sw=4
-

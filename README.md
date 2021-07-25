@@ -1,4 +1,4 @@
-# TA-azure_agent_deployment_client_name
+# TA-agent_deployment_clientname
 
 This is specific to azure linux VMs  
   
