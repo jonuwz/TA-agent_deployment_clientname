@@ -74,6 +74,7 @@ def localTags():
     tags = {}
     path = '/etc/identity'
     if not os.path.isfile(path) or not os.access(path, os.R_OK):
+        print("localtest fail")
         return None
 
     with open(path) as myfile:
@@ -82,15 +83,12 @@ def localTags():
         key, val = line.strip().partition("=")[::2]
         tags[key.strip()] = str(val)
 
-    if 'project' not in tags:
-        return None
-
     tags['name'] = socket.gethostname().split('.', 1)[0]
     if 'location' not in tags:
         tags['location'] = 'dc'
     if 'provider' not in tags:
         tags['provider'] = DEFAULT_DC_PROVIDER
-    
+
     return tags
 
 def clientName(authToken):
@@ -138,17 +136,28 @@ if __name__ == "__main__":
         print("ERR No token")
         sys.exit(1)
 
+    print("Attempting to get localTags")
     tags = localTags()
+    if tags is not None and 'project' not in tags:
+        print("localTags does not have project")
+        sys.exit(1)
+
     if tags is None:
+        print("Attempting to get azureTags")
         tags = azureTags()
+
     if tags is None:
+        print("Attempting to get gcpTags")
         tags = gcpTags()
 
-    if tags is not None:
-        desiredName = clientNameFromTags(tags)
-        actualName  = clientName(authToken)
+    if tags is None:
+        print("Unable to get tags by any method")
+        sys.exit(1)
 
-        if actualName is not None and desiredName != actualName:
-            setClientName(authToken,desiredName)
+    desiredName = clientNameFromTags(tags)
+    actualName  = clientName(authToken)
+
+    if actualName is not None and desiredName != actualName:
+        setClientName(authToken,desiredName)
 
 # vi:et:sts=4:sw=4
