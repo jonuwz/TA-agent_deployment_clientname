@@ -120,9 +120,12 @@ def setClientName(authToken,name):
 
 def clientNameFromTags(t):
 
-    pattern = re.compile('[\W_]+')
-
+    pattern = re.compile('[^a-zA-Z0-9_-]+')
     cleanTags=[]
+
+    if 'name' in t:
+        t['name'] = t['name'].split('.')[0]
+
     for key in ["location","provider","project","family","app","service","name"]:
         val = t.get(key,'unknown')
         val = pattern.sub('',val)
